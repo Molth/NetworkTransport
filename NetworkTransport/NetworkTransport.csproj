@@ -1,17 +1,17 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-    <PropertyGroup>
-        <TargetFramework>net8.0</TargetFramework>
-        <RootNamespace>kcp</RootNamespace>
-        <ImplicitUsings>disable</ImplicitUsings>
-        <Nullable>enable</Nullable>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Network</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
 
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    </PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
 
-    <ItemGroup>
-      <PackageReference Include="NanoSockets-CSharp" Version="1.0.4" />
-      <PackageReference Include="NativeCollections" Version="1.1.0" />
-    </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="NanoSockets-CSharp" Version="1.0.4" />
+    <PackageReference Include="NativeCollections" Version="1.1.0" />
+  </ItemGroup>
 
 </Project>

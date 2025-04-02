@@ -752,6 +752,8 @@ namespace Network
 
                 ikcp_release(&peer->reliable);
 
+                peer->lastSendTime = peer->host->serviceTimestamp;
+
                 var buffer = stackalloc byte[15];
 
                 memcpy(buffer, &peer->host->version, 4);
@@ -840,6 +842,8 @@ namespace Network
             if (19 + length > (int)NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE)
                 return -1;
 
+            peer->lastSendTime = peer->host->serviceTimestamp;
+
             var buffer = stackalloc byte[19 + length];
 
             memcpy(buffer, &peer->host->version, 4);
@@ -863,6 +867,8 @@ namespace Network
         {
             if (15 + length > (int)NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE)
                 return -1;
+
+            peer->lastSendTime = peer->host->serviceTimestamp;
 
             var buffer = stackalloc byte[15 + length];
 
