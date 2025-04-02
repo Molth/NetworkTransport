@@ -20,6 +20,9 @@ namespace Network
 
         public static NetworkHost* network_host_create(NetworkHostCreateOptions options)
         {
+            if (options.peerCount == 0)
+                options.peerCount = 1;
+
             if (options.socketSendBufferSize == 0)
                 options.socketSendBufferSize = 8 * 1024 * 1024;
 
@@ -136,7 +139,7 @@ namespace Network
 
             while (UDP.Poll(host->socket, 0) > 0)
             {
-                var byteCount = UDP.Receive(host->socket, ref *(&address), ref *buffer, (int)host->maximumSocketReceiveSize);
+                var byteCount = UDP.Receive(host->socket, ref *&address, ref *buffer, (int)host->maximumSocketReceiveSize);
                 if (byteCount < 0)
                     break;
 
@@ -301,6 +304,7 @@ namespace Network
             memcpy(buffer + 23, &peer->connectContext, 32);
 
             _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 55);
+            peer->sentDataTotal += 55;
 
             return peer;
         }
@@ -367,6 +371,8 @@ namespace Network
 
             memcpy(&peer->connectContext, buffer + 8, 32);
 
+            peer->receivedDataTotal += 55;
+
             if (host->connectHook.peerHook != null &&
                 host->connectHook.peerHook(host->connectHook.user, host, peer) != 0)
             {
@@ -388,6 +394,7 @@ namespace Network
             memcpy(host->buffer + 29, &host->maximumReliableReceiveSize, 4);
 
             _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 33);
+            peer->sentDataTotal += 33;
         }
 
         private static void network_protocol_handle_connect_acknowledge(NetworkHost* host, Address* address, NetworkSession* localSession, NetworkSession* remoteSession, byte* buffer)
@@ -408,6 +415,8 @@ namespace Network
                 memcpy(&peer->maximumSocketReceiveSize, buffer, 4);
                 memcpy(&peer->maximumReliableReceiveSize, buffer + 4, 4);
 
+                peer->receivedDataTotal += 33;
+
                 memcpy(host->buffer, &host->version, 4);
 
                 *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_PING;
@@ -416,6 +425,7 @@ namespace Network
                 memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
 
                 _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
+                peer->sentDataTotal += 15;
 
                 network_protocol_connect_notify(host, peer);
             }
@@ -437,6 +447,8 @@ namespace Network
                     network_protocol_connect_notify(host, peer);
 
                 peer->lastReceiveTime = host->serviceTimestamp;
+
+                peer->receivedDataTotal += 15;
             }
         }
 
@@ -457,6 +469,8 @@ namespace Network
                 peer->lastSendTime = host->serviceTimestamp;
                 peer->lastReceiveTime = host->serviceTimestamp;
 
+                peer->receivedDataTotal += 15;
+
                 memcpy(host->buffer, &host->version, 4);
 
                 *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_DISCONNECT_ACKNOWLEDGE;
@@ -465,6 +479,7 @@ namespace Network
                 memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
 
                 _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
+                peer->sentDataTotal += 15;
             }
         }
 
@@ -477,6 +492,8 @@ namespace Network
                 if (peer->state != (byte)NETWORK_PEER_STATE_DISCONNECTING ||
                     peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
                     return;
+
+                peer->receivedDataTotal += 15;
 
                 network_protocol_disconnect_notify(host, peer);
                 network_protocol_remove_peer(host, peer);
@@ -499,6 +516,8 @@ namespace Network
                     network_protocol_connect_notify(host, peer);
 
                 peer->lastReceiveTime = host->serviceTimestamp;
+
+                peer->receivedDataTotal += 15 + (ulong)byteCount;
 
                 if (ikcp_input(&peer->reliable, buffer, byteCount) < 0)
                 {
@@ -528,6 +547,8 @@ namespace Network
                     network_protocol_connect_notify(host, peer);
 
                 peer->lastReceiveTime = host->serviceTimestamp;
+
+                peer->receivedDataTotal += 15 + (ulong)byteCount;
 
                 if (byteCount < 4)
                 {
@@ -584,6 +605,8 @@ namespace Network
 
                 peer->lastReceiveTime = host->serviceTimestamp;
 
+                peer->receivedDataTotal += 15 + (ulong)byteCount;
+
                 if (byteCount == 0)
                     return;
 
@@ -617,6 +640,9 @@ namespace Network
                 peer->address = *address;
 
                 peer->localSession.timestamp = DateTime.UtcNow.Ticks;
+
+                peer->sentDataTotal = 0;
+                peer->receivedDataTotal = 0;
             }
 
             return peer;
@@ -746,6 +772,7 @@ namespace Network
                         memcpy(host->buffer + 23, &peer->connectContext, 32);
 
                         _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 55);
+                        peer->sentDataTotal += 55;
                     }
                     else if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
                     {
@@ -756,9 +783,13 @@ namespace Network
                         memcpy(host->buffer + 29, &host->maximumReliableReceiveSize, 4);
 
                         _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 33);
+                        peer->sentDataTotal += 33;
                     }
                     else
+                    {
                         _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
+                        peer->sentDataTotal += 15;
+                    }
                 }
 
                 if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED ||
@@ -816,6 +847,7 @@ namespace Network
             peer->lastSendTime = peer->host->serviceTimestamp;
 
             _ = UDP.Send(peer->host->socket, ref peer->address, ref *(buffer - 15), 15 + byteCount);
+            peer->sentDataTotal += 15 + (ulong)byteCount;
 
             return 0;
         }
@@ -847,6 +879,7 @@ namespace Network
                 memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
 
                 _ = UDP.Send(peer->host->socket, ref peer->address, ref *buffer, 15);
+                peer->sentDataTotal += 15;
             }
             else
             {
@@ -878,6 +911,7 @@ namespace Network
                 memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
 
                 _ = UDP.Send(peer->host->socket, ref peer->address, ref *buffer, 15);
+                peer->sentDataTotal += 15;
             }
 
             network_protocol_disconnect_notify(peer->host, peer);
@@ -959,6 +993,7 @@ namespace Network
             memcpy(buffer + 19, data, (nuint)length);
 
             _ = UDP.Send(peer->host->socket, ref peer->address, ref *buffer, 19 + length);
+            peer->sentDataTotal += 19 + (ulong)length;
 
             return 0;
         }
@@ -982,6 +1017,7 @@ namespace Network
             memcpy(buffer + 15, data, (nuint)length);
 
             _ = UDP.Send(peer->host->socket, ref peer->address, ref *buffer, 15 + length);
+            peer->sentDataTotal += 15 + (ulong)length;
 
             return 0;
         }

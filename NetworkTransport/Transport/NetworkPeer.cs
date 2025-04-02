@@ -30,6 +30,9 @@ namespace Network
 
         public NetworkConnectContext connectContext;
 
+        public ulong sentDataTotal;
+        public ulong receivedDataTotal;
+
         public IKCPCB reliable;
 
         public uint unreliableSendSequenceNumber;
