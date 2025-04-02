@@ -15,9 +15,6 @@ namespace Network
 {
     public static unsafe class NetworkTransport
     {
-        public const uint NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE = 1500;
-        public const uint NETWORK_PROTOCOL_MESSAGE_BUFFER_SIZE = 4096;
-
         public const uint NETWORK_PEER_PING_INTERVAL_DEFAULT = 500;
         public const uint NETWORK_PEER_TIMEOUT_DEFAULT = 10000;
 
@@ -28,6 +25,16 @@ namespace Network
 
             if (options.socketReceiveBufferSize == 0)
                 options.socketReceiveBufferSize = 8 * 1024 * 1024;
+
+            if (options.maximumSocketReceiveSize == 0)
+                options.maximumSocketReceiveSize = 1400;
+            else if (options.maximumSocketReceiveSize < 128)
+                options.maximumSocketReceiveSize = 128;
+
+            if (options.maximumReliableReceiveSize == 0)
+                options.maximumReliableReceiveSize = 4096;
+            else if (options.maximumReliableReceiveSize < 128)
+                options.maximumReliableReceiveSize = 128;
 
             if (options.eventQueueSize == 0)
                 options.eventQueueSize = 128;
@@ -75,7 +82,12 @@ namespace Network
             _ = UDP.SetNonBlocking(socket, 1);
             host->socket = socket;
 
+            host->maximumSocketReceiveSize = options.maximumSocketReceiveSize;
+            host->maximumReliableReceiveSize = options.maximumReliableReceiveSize;
+
             host->incomingEvents = new UnsafeChunkedQueue<NetworkEvent>((int)options.eventQueueSize, (int)options.eventQueueMaxFreeChunks);
+
+            host->connectHook = options.connectHook;
 
             return host;
         }
@@ -113,14 +125,17 @@ namespace Network
 
         public static int network_host_service(NetworkHost* host)
         {
-            var address = new Address();
-            var buffer = stackalloc byte[(int)NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE];
+            var buffer = stackalloc byte[(int)_imax_(host->maximumSocketReceiveSize, host->maximumReliableReceiveSize)];
+            host->buffer = buffer;
 
             host->serviceTimestamp = (uint)(Stopwatch.GetTimestamp() * 1000L / Stopwatch.Frequency);
 
+            Address address;
+            NetworkSession localSession, remoteSession;
+
             while (UDP.Poll(host->socket, 0) > 0)
             {
-                var byteCount = UDP.Receive(host->socket, ref address, ref *buffer, (int)NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE);
+                var byteCount = UDP.Receive(host->socket, ref *(&address), ref *buffer, (int)host->maximumSocketReceiveSize);
                 if (byteCount < 0)
                     break;
 
@@ -132,25 +147,23 @@ namespace Network
                 if (version != host->version)
                     continue;
 
-                NetworkSession localSession, remoteSession;
-
                 switch (*(buffer + 4))
                 {
                     case (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_CONNECT:
 
-                        if (byteCount != 15)
+                        if (byteCount != 55)
                             continue;
 
                         memcpy(&remoteSession.id, buffer + 5, 2);
                         memcpy(&remoteSession.timestamp, buffer + 7, 8);
 
-                        network_protocol_handle_connect(host, &address, &remoteSession);
+                        network_protocol_handle_connect(host, &address, &remoteSession, buffer + 15);
 
                         continue;
 
                     case (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_CONNECT_ACKNOWLEDGE:
 
-                        if (byteCount != 25)
+                        if (byteCount != 33)
                             continue;
 
                         memcpy(&localSession.id, buffer + 5, 2);
@@ -159,7 +172,7 @@ namespace Network
                         memcpy(&remoteSession.id, buffer + 15, 2);
                         memcpy(&remoteSession.timestamp, buffer + 17, 8);
 
-                        network_protocol_handle_connect_acknowledge(host, &address, &localSession, &remoteSession);
+                        network_protocol_handle_connect_acknowledge(host, &address, &localSession, &remoteSession, buffer + 25);
 
                         continue;
 
@@ -233,6 +246,8 @@ namespace Network
 
             network_protocol_check_timeouts(host);
 
+            host->buffer = null;
+
             var eventCount = host->incomingEvents.Count;
             return eventCount > 0 ? eventCount : -1;
         }
@@ -248,14 +263,14 @@ namespace Network
             return -1;
         }
 
-        public static NetworkPeer* network_host_connect(NetworkHost* host, Address* address, uint version)
+        public static NetworkPeer* network_host_connect(NetworkHost* host, Address* address, NetworkHostConnectOptions options)
         {
             var peer = network_protocol_add_peer(host, address);
 
             if (peer == null)
                 return null;
 
-            peer->version = version;
+            peer->version = options.version;
 
             peer->state = (byte)NETWORK_PEER_STATE_CONNECTING;
 
@@ -265,7 +280,12 @@ namespace Network
             peer->pingInterval = NETWORK_PEER_PING_INTERVAL_DEFAULT;
             peer->timeout = NETWORK_PEER_TIMEOUT_DEFAULT;
 
-            var buffer = stackalloc byte[15];
+            peer->maximumSocketReceiveSize = host->maximumSocketReceiveSize;
+            peer->maximumReliableReceiveSize = host->maximumReliableReceiveSize;
+
+            peer->connectContext = options.connectContext;
+
+            var buffer = stackalloc byte[55];
 
             memcpy(buffer, &peer->version, 4);
 
@@ -274,12 +294,17 @@ namespace Network
             memcpy(buffer + 5, &peer->localSession.id, 2);
             memcpy(buffer + 7, &peer->localSession.timestamp, 8);
 
-            _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 15);
+            memcpy(buffer + 15, &peer->maximumSocketReceiveSize, 4);
+            memcpy(buffer + 19, &peer->maximumReliableReceiveSize, 4);
+
+            memcpy(buffer + 23, &peer->connectContext, 32);
+
+            _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 55);
 
             return peer;
         }
 
-        private static void network_protocol_handle_connect(NetworkHost* host, Address* address, NetworkSession* remoteSession)
+        private static void network_protocol_handle_connect(NetworkHost* host, Address* address, NetworkSession* remoteSession, byte* buffer)
         {
             NetworkPeer* peer;
 
@@ -319,22 +344,35 @@ namespace Network
             peer->pingInterval = NETWORK_PEER_PING_INTERVAL_DEFAULT;
             peer->timeout = NETWORK_PEER_TIMEOUT_DEFAULT;
 
-            var buffer = stackalloc byte[25];
+            memcpy(&peer->maximumSocketReceiveSize, buffer, 4);
+            memcpy(&peer->maximumReliableReceiveSize, buffer + 4, 4);
 
-            memcpy(buffer, &host->version, 4);
+            memcpy(&peer->connectContext, buffer + 8, 32);
 
-            *(buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_CONNECT_ACKNOWLEDGE;
+            if (host->connectHook.hook != null &&
+                host->connectHook.hook(host->connectHook.user, host, peer) != 0)
+            {
+                network_protocol_remove_peer(host, peer);
+                return;
+            }
 
-            memcpy(buffer + 5, &peer->remoteSession.id, 2);
-            memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
+            memcpy(host->buffer, &host->version, 4);
 
-            memcpy(buffer + 15, &peer->localSession.id, 2);
-            memcpy(buffer + 17, &peer->localSession.timestamp, 8);
+            *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_CONNECT_ACKNOWLEDGE;
 
-            _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 25);
+            memcpy(host->buffer + 5, &peer->remoteSession.id, 2);
+            memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
+
+            memcpy(host->buffer + 15, &peer->localSession.id, 2);
+            memcpy(host->buffer + 17, &peer->localSession.timestamp, 8);
+
+            memcpy(host->buffer + 25, &host->maximumSocketReceiveSize, 4);
+            memcpy(host->buffer + 29, &host->maximumReliableReceiveSize, 4);
+
+            _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 33);
         }
 
-        private static void network_protocol_handle_connect_acknowledge(NetworkHost* host, Address* address, NetworkSession* localSession, NetworkSession* remoteSession)
+        private static void network_protocol_handle_connect_acknowledge(NetworkHost* host, Address* address, NetworkSession* localSession, NetworkSession* remoteSession, byte* buffer)
         {
             if (host->peerIDs.TryGetValue(localSession->id, out var value))
             {
@@ -349,16 +387,17 @@ namespace Network
                 peer->lastSendTime = host->serviceTimestamp;
                 peer->lastReceiveTime = host->serviceTimestamp;
 
-                var buffer = stackalloc byte[15];
+                memcpy(&peer->maximumSocketReceiveSize, buffer, 4);
+                memcpy(&peer->maximumReliableReceiveSize, buffer + 4, 4);
 
-                memcpy(buffer, &host->version, 4);
+                memcpy(host->buffer, &host->version, 4);
 
-                *(buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_PING;
+                *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_PING;
 
-                memcpy(buffer + 5, &peer->remoteSession.id, 2);
-                memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
+                memcpy(host->buffer + 5, &peer->remoteSession.id, 2);
+                memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
 
-                _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 15);
+                _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
 
                 network_protocol_connect_notify(host, peer);
             }
@@ -400,16 +439,14 @@ namespace Network
                 peer->lastSendTime = host->serviceTimestamp;
                 peer->lastReceiveTime = host->serviceTimestamp;
 
-                var buffer = stackalloc byte[15];
+                memcpy(host->buffer, &host->version, 4);
 
-                memcpy(buffer, &host->version, 4);
+                *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_DISCONNECT_ACKNOWLEDGE;
 
-                *(buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_DISCONNECT_ACKNOWLEDGE;
+                memcpy(host->buffer + 5, &peer->remoteSession.id, 2);
+                memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
 
-                memcpy(buffer + 5, &peer->remoteSession.id, 2);
-                memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
-
-                _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 15);
+                _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
             }
         }
 
@@ -582,7 +619,7 @@ namespace Network
 
             ikcp_nodelay(&peer->reliable, 1, 10, 2, 1);
             ikcp_wndsize(&peer->reliable, 128, 256);
-            ikcp_setmtu(&peer->reliable, (int)NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE - 15);
+            ikcp_setmtu(&peer->reliable, (int)host->maximumSocketReceiveSize - 15);
 
             peer->unreliableSendSequenceNumber = 0;
             peer->unreliableReceiveSequenceNumber = 0;
@@ -593,7 +630,6 @@ namespace Network
             {
                 type = NETWORK_EVENT_TYPE_CONNECT,
                 peer = peer,
-                packet = default,
                 guid = peer->guid
             });
         }
@@ -608,15 +644,12 @@ namespace Network
             {
                 type = NETWORK_EVENT_TYPE_DISCONNECT,
                 peer = peer,
-                packet = default,
                 guid = peer->guid
             });
         }
 
         private static void network_protocol_check_timeouts(NetworkHost* host)
         {
-            var buffer = stackalloc byte[(int)_imax_(NETWORK_PROTOCOL_MESSAGE_BUFFER_SIZE, NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE)];
-
             var peers = host->peerIDs.Values;
 
             for (var i = peers.Count - 1; i >= 0; --i)
@@ -682,34 +715,47 @@ namespace Network
                             break;
                     }
 
-                    memcpy(buffer, &host->version, 4);
-                    *(buffer + 4) = command;
-                    memcpy(buffer + 5, &session->id, 2);
-                    memcpy(buffer + 7, &session->timestamp, 8);
+                    memcpy(host->buffer, &host->version, 4);
+                    *(host->buffer + 4) = command;
+                    memcpy(host->buffer + 5, &session->id, 2);
+                    memcpy(host->buffer + 7, &session->timestamp, 8);
 
-                    if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                    if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTING)
                     {
-                        memcpy(buffer + 15, &peer->localSession.id, 2);
-                        memcpy(buffer + 17, &peer->localSession.timestamp, 8);
-                        _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 25);
+                        memcpy(host->buffer + 15, &peer->maximumSocketReceiveSize, 4);
+                        memcpy(host->buffer + 19, &peer->maximumReliableReceiveSize, 4);
+
+                        memcpy(host->buffer + 23, &peer->connectContext, 32);
+
+                        _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 55);
+                    }
+                    else if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                    {
+                        memcpy(host->buffer + 15, &peer->localSession.id, 2);
+                        memcpy(host->buffer + 17, &peer->localSession.timestamp, 8);
+
+                        memcpy(host->buffer + 25, &host->maximumSocketReceiveSize, 4);
+                        memcpy(host->buffer + 29, &host->maximumReliableReceiveSize, 4);
+
+                        _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 33);
                     }
                     else
-                        _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 15);
+                        _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
                 }
 
                 if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED ||
                     peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
                 {
-                    memcpy(buffer, &host->version, 4);
-                    *(buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_RELIABLE_RECEIVE;
-                    memcpy(buffer + 5, &peer->remoteSession.id, 2);
-                    memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
+                    memcpy(host->buffer, &host->version, 4);
+                    *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_RELIABLE_RECEIVE;
+                    memcpy(host->buffer + 5, &peer->remoteSession.id, 2);
+                    memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
 
-                    ikcp_update(&peer->reliable, host->serviceTimestamp, buffer + 15);
+                    ikcp_update(&peer->reliable, host->serviceTimestamp, host->buffer + 15);
 
                     while (true)
                     {
-                        var byteCount = ikcp_recv(&peer->reliable, buffer, (int)NETWORK_PROTOCOL_MESSAGE_BUFFER_SIZE);
+                        var byteCount = ikcp_recv(&peer->reliable, host->buffer, (int)host->maximumReliableReceiveSize);
 
                         if (byteCount == -1)
                             break;
@@ -723,7 +769,7 @@ namespace Network
                         }
 
                         var data = new NativeArray<byte>(byteCount);
-                        memcpy(data.Array, buffer, (nuint)byteCount);
+                        memcpy(data.Array, host->buffer, (nuint)byteCount);
 
                         var packet = new NetworkPacket
                         {
@@ -867,7 +913,7 @@ namespace Network
 
         private static int network_peer_send_reliable(NetworkPeer* peer, void* data, int length)
         {
-            if (length > (int)NETWORK_PROTOCOL_MESSAGE_BUFFER_SIZE)
+            if (length > (int)peer->maximumReliableReceiveSize)
                 return -1;
 
             return ikcp_send(&peer->reliable, (byte*)data, length);
@@ -875,7 +921,7 @@ namespace Network
 
         private static int network_peer_send_unreliable(NetworkPeer* peer, void* data, int length)
         {
-            if (19 + length > (int)NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE)
+            if (19 + length > (int)peer->maximumSocketReceiveSize)
                 return -1;
 
             peer->lastSendTime = peer->host->serviceTimestamp;
@@ -901,7 +947,7 @@ namespace Network
 
         private static int network_peer_send_unsequenced(NetworkPeer* peer, void* data, int length)
         {
-            if (15 + length > (int)NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE)
+            if (15 + length > (int)peer->maximumSocketReceiveSize)
                 return -1;
 
             peer->lastSendTime = peer->host->serviceTimestamp;

@@ -14,7 +14,9 @@ namespace Network
     {
         private static bool _isRunning;
 
-        private static void Main()
+        private static void Main() => Start();
+
+        private static void Start()
         {
             _isRunning = true;
             Console.CancelKeyPress += (sender, args) => _isRunning = false;
@@ -94,7 +96,10 @@ namespace Network
             address.Port = 7777;
 
             network_host_service(host);
-            network_host_connect(host, &address, 1);
+            network_host_connect(host, &address, new NetworkHostConnectOptions()
+            {
+                version = 1
+            });
 
             NetworkEvent @event;
 
@@ -145,7 +150,7 @@ namespace Network
 
                 if (!disconnected && peer != null)
                 {
-                    if (i == 10)
+                    if (i == 10000)
                     {
                         network_peer_disconnect_later(peer);
 

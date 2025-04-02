@@ -8,7 +8,7 @@ namespace Network
     {
         public required NetworkEventType type;
         public required NetworkPeer* peer;
-        public required NetworkPacket packet;
+        public NetworkPacket packet;
         public required Guid guid;
     }
 }

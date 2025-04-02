@@ -25,6 +25,11 @@ namespace Network
         public uint pingInterval;
         public uint timeout;
 
+        public uint maximumSocketReceiveSize;
+        public uint maximumReliableReceiveSize;
+
+        public NetworkConnectContext connectContext;
+
         public IKCPCB reliable;
 
         public uint unreliableSendSequenceNumber;

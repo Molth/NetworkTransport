@@ -16,6 +16,14 @@ namespace Network
         public NetworkPeer* peers;
 
         public Socket socket;
+
+        public uint maximumSocketReceiveSize;
+        public uint maximumReliableReceiveSize;
+
         public UnsafeChunkedQueue<NetworkEvent> incomingEvents;
+
+        public NetworkConnectHook connectHook;
+
+        public byte* buffer;
     }
 }

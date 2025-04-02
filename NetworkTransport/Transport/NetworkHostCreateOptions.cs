@@ -11,7 +11,12 @@ namespace Network
         public uint socketSendBufferSize;
         public uint socketReceiveBufferSize;
 
+        public uint maximumSocketReceiveSize;
+        public uint maximumReliableReceiveSize;
+
         public uint eventQueueSize;
         public uint eventQueueMaxFreeChunks;
+
+        public NetworkConnectHook connectHook;
     }
 }
