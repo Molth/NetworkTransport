@@ -613,7 +613,9 @@ namespace Network
 
                 if (_itimediff(peer->lastReceiveTime + peer->timeout, host->serviceTimestamp) <= 0)
                 {
-                    if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED)
+                    if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED ||
+                        peer->state == (byte)NETWORK_PEER_STATE_CONNECTING ||
+                        peer->state == (byte)NETWORK_PEER_STATE_DISCONNECTING)
                         network_protocol_disconnect_notify(host, peer);
 
                     network_protocol_remove_peer(host, peer);
