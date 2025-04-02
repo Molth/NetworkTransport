@@ -683,6 +683,13 @@ namespace Network
 
                 if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED)
                 {
+                    memcpy(buffer, &host->version, 4);
+                    *(buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_RELIABLE_RECEIVE;
+                    memcpy(buffer + 5, &peer->remoteSession.id, 2);
+                    memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
+
+                    ikcp_update(&peer->reliable, host->serviceTimestamp, buffer + 15);
+
                     while (true)
                     {
                         var byteCount = ikcp_recv(&peer->reliable, buffer, (int)NETWORK_PROTOCOL_MESSAGE_BUFFER_SIZE);
@@ -715,13 +722,6 @@ namespace Network
                             guid = peer->guid
                         });
                     }
-
-                    memcpy(buffer, &host->version, 4);
-                    *(buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_RELIABLE_RECEIVE;
-                    memcpy(buffer + 5, &peer->remoteSession.id, 2);
-                    memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
-
-                    ikcp_update(&peer->reliable, host->serviceTimestamp, buffer + 15);
                 }
 
                 next_peer: ;
