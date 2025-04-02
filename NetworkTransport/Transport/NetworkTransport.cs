@@ -356,7 +356,7 @@ namespace Network
             peer->lastReceiveTime = host->serviceTimestamp;
 
             peer->pingInterval = NETWORK_PEER_PING_INTERVAL_DEFAULT;
-            peer->timeout = NETWORK_PEER_TIMEOUT_DEFAULT;
+            peer->timeout = NETWORK_PEER_TIMEOUT_DEFAULT / 2;
 
             memcpy(&peer->maximumSocketReceiveSize, buffer, 4);
             memcpy(&peer->maximumReliableReceiveSize, buffer + 4, 4);
