@@ -8,8 +8,8 @@ namespace Network
         public required ushort peerCount;
         public required ushort port;
 
-        public uint sendBufferSize;
-        public uint receiveBufferSize;
+        public uint socketSendBufferSize;
+        public uint socketReceiveBufferSize;
 
         public uint eventQueueSize;
         public uint eventQueueMaxFreeChunks;

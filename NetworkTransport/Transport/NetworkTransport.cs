@@ -23,11 +23,11 @@ namespace Network
 
         public static NetworkHost* network_host_create(NetworkHostCreateOptions options)
         {
-            if (options.sendBufferSize == 0)
-                options.sendBufferSize = 8 * 1024 * 1024;
+            if (options.socketSendBufferSize == 0)
+                options.socketSendBufferSize = 8 * 1024 * 1024;
 
-            if (options.receiveBufferSize == 0)
-                options.receiveBufferSize = 8 * 1024 * 1024;
+            if (options.socketReceiveBufferSize == 0)
+                options.socketReceiveBufferSize = 8 * 1024 * 1024;
 
             if (options.eventQueueSize == 0)
                 options.eventQueueSize = 128;
@@ -38,7 +38,7 @@ namespace Network
             if (UDP.Initialize() != 0)
                 return null;
 
-            var socket = UDP.Create((int)options.sendBufferSize, (int)options.receiveBufferSize);
+            var socket = UDP.Create((int)options.socketSendBufferSize, (int)options.socketReceiveBufferSize);
             if (socket == -1)
                 return null;
 
