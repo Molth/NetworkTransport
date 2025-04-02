@@ -113,8 +113,6 @@ namespace Network
 
         public static int network_host_service(NetworkHost* host)
         {
-            var eventCount = host->incomingEvents.Count;
-
             var address = new Address();
             var buffer = stackalloc byte[(int)NETWORK_PROTOCOL_SOCKET_BUFFER_SIZE];
 
@@ -235,7 +233,7 @@ namespace Network
 
             network_protocol_check_timeouts(host);
 
-            eventCount = host->incomingEvents.Count - eventCount;
+            var eventCount = host->incomingEvents.Count;
             return eventCount > 0 ? eventCount : -1;
         }
 
@@ -342,8 +340,8 @@ namespace Network
             {
                 var peer = (NetworkPeer*)value;
 
-                if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTING
-                    || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTING ||
+                    peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
                     return;
 
                 peer->remoteSession = *remoteSession;
@@ -372,8 +370,10 @@ namespace Network
             {
                 var peer = (NetworkPeer*)value;
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED && peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
-                    || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER) ||
+                    peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
                     return;
 
                 if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
@@ -389,8 +389,10 @@ namespace Network
             {
                 var peer = (NetworkPeer*)value;
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED && peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
-                    || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER) ||
+                    peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
                     return;
 
                 peer->state = (byte)NETWORK_PEER_STATE_DISCONNECT_ACKNOWLEDGING;
@@ -417,8 +419,8 @@ namespace Network
             {
                 var peer = (NetworkPeer*)value;
 
-                if (peer->state != (byte)NETWORK_PEER_STATE_DISCONNECTING
-                    || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                if (peer->state != (byte)NETWORK_PEER_STATE_DISCONNECTING ||
+                    peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
                     return;
 
                 network_protocol_disconnect_notify(host, peer);
@@ -432,7 +434,9 @@ namespace Network
             {
                 var peer = (NetworkPeer*)value;
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED && peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
                     || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
                     return;
 
@@ -445,7 +449,11 @@ namespace Network
                 {
                     network_protocol_disconnect_notify(host, peer);
                     network_protocol_remove_peer(host, peer);
+                    return;
                 }
+
+                if (peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_LATER && iqueue_is_empty(&peer->reliable.snd_buf))
+                    network_peer_disconnect(peer);
             }
         }
 
@@ -455,7 +463,9 @@ namespace Network
             {
                 var peer = (NetworkPeer*)value;
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED && peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
                     || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
                     return;
 
@@ -508,7 +518,9 @@ namespace Network
             {
                 var peer = (NetworkPeer*)value;
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED && peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
                     || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
                     return;
 
@@ -615,7 +627,9 @@ namespace Network
                 {
                     if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED ||
                         peer->state == (byte)NETWORK_PEER_STATE_CONNECTING ||
-                        peer->state == (byte)NETWORK_PEER_STATE_DISCONNECTING)
+                        peer->state == (byte)NETWORK_PEER_STATE_DISCONNECTING ||
+                        peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_ACKNOWLEDGING ||
+                        peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
                         network_protocol_disconnect_notify(host, peer);
 
                     network_protocol_remove_peer(host, peer);
@@ -683,7 +697,8 @@ namespace Network
                         _ = UDP.Send(host->socket, ref peer->address, ref *buffer, 15);
                 }
 
-                if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED)
+                if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED ||
+                    peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
                 {
                     memcpy(buffer, &host->version, 4);
                     *(buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_RELIABLE_RECEIVE;
@@ -743,10 +758,14 @@ namespace Network
 
         public static int network_peer_disconnect(NetworkPeer* peer)
         {
-            if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTED && peer->state != (byte)NETWORK_PEER_STATE_CONNECTING)
+            if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                peer->state != (byte)NETWORK_PEER_STATE_CONNECTING &&
+                peer->state != (byte)NETWORK_PEER_STATE_DISCONNECTING &&
+                peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
                 return -1;
 
-            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED)
+            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED ||
+                peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
             {
                 peer->state = (byte)NETWORK_PEER_STATE_DISCONNECTING;
 
@@ -776,10 +795,14 @@ namespace Network
 
         public static int network_peer_disconnect_now(NetworkPeer* peer)
         {
-            if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTED && peer->state != (byte)NETWORK_PEER_STATE_CONNECTING)
+            if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                peer->state != (byte)NETWORK_PEER_STATE_CONNECTING &&
+                peer->state != (byte)NETWORK_PEER_STATE_DISCONNECTING &&
+                peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
                 return -1;
 
-            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED)
+            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED ||
+                peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
             {
                 var buffer = stackalloc byte[15];
 
@@ -795,6 +818,19 @@ namespace Network
 
             network_protocol_disconnect_notify(peer->host, peer);
             network_protocol_remove_peer(peer->host, peer);
+
+            return 0;
+        }
+
+        public static int network_peer_disconnect_later(NetworkPeer* peer)
+        {
+            if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTED)
+                return -1;
+
+            if (iqueue_is_empty(&peer->reliable.snd_buf))
+                return network_peer_disconnect(peer);
+
+            peer->state = (byte)NETWORK_PEER_STATE_DISCONNECT_LATER;
 
             return 0;
         }

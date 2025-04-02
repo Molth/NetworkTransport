@@ -28,7 +28,7 @@ namespace Network
 
         private static void StartServer()
         {
-            var host =  network_host_create(new NetworkHostCreateOptions
+            var host = network_host_create(new NetworkHostCreateOptions
             {
                 version = 1,
                 peerCount = 4,
@@ -36,15 +36,15 @@ namespace Network
                 eventQueueSize = 4
             });
 
-             network_host_service(host);
+            network_host_service(host);
 
             NetworkEvent @event;
 
             while (_isRunning)
             {
-                if ( network_host_service(host) > 0)
+                if (network_host_service(host) > 0)
                 {
-                    while ( network_host_check_events(host, &@event) == 0)
+                    while (network_host_check_events(host, &@event) == 0)
                     {
                         switch (@event.type)
                         {
@@ -52,6 +52,8 @@ namespace Network
                                 break;
 
                             case NETWORK_EVENT_TYPE_CONNECT:
+
+                                network_peer_ping_interval(@event.peer, NETWORK_PEER_PING_INTERVAL_DEFAULT, 1000);
 
                                 Console.WriteLine("server connected");
 
@@ -79,7 +81,7 @@ namespace Network
 
         private static void StartClient()
         {
-            var host =  network_host_create(new NetworkHostCreateOptions
+            var host = network_host_create(new NetworkHostCreateOptions
             {
                 version = 1,
                 peerCount = 4,
@@ -91,8 +93,8 @@ namespace Network
             Address.CreateFromIP("127.0.0.1", out var address);
             address.Port = 7777;
 
-             network_host_service(host);
-             network_host_connect(host, &address, 1);
+            network_host_service(host);
+            network_host_connect(host, &address, 1);
 
             NetworkEvent @event;
 
@@ -100,11 +102,13 @@ namespace Network
 
             var buffer = stackalloc byte[1024];
 
+            var disconnected = false;
+
             while (_isRunning)
             {
-                if ( network_host_service(host) > 0)
+                if (network_host_service(host) > 0)
                 {
-                    while ( network_host_check_events(host, &@event) == 0)
+                    while (network_host_check_events(host, &@event) == 0)
                     {
                         switch (@event.type)
                         {
@@ -114,6 +118,8 @@ namespace Network
                             case NETWORK_EVENT_TYPE_CONNECT:
 
                                 peer = @event.peer;
+
+                                network_peer_ping_interval(peer, NETWORK_PEER_PING_INTERVAL_DEFAULT, 1000);
 
                                 Console.WriteLine("client connected");
 
@@ -137,10 +143,19 @@ namespace Network
                     }
                 }
 
-                if (peer != null)
+                if (!disconnected && peer != null)
                 {
-                    var byteCount = Encoding.UTF8.GetBytes($"test {i++}", MemoryMarshal.CreateSpan(ref *buffer, 1024));
-                     network_peer_send(peer, buffer, byteCount, NetworkPacketFlag.NETWORK_PACKET_FLAG_UNSEQUENCED);
+                    if (i == 10)
+                    {
+                        network_peer_disconnect_later(peer);
+
+                        disconnected = true;
+                    }
+                    else
+                    {
+                        var byteCount = Encoding.UTF8.GetBytes($"test {i++}", MemoryMarshal.CreateSpan(ref *buffer, 1024));
+                        network_peer_send(peer, buffer, byteCount, NetworkPacketFlag.NETWORK_PACKET_FLAG_RELIABLE);
+                    }
                 }
 
                 Thread.Sleep(100);
