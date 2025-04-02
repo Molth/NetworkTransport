@@ -307,6 +307,10 @@ namespace Network
 
         private static void network_protocol_handle_connect(NetworkHost* host, Address* address, NetworkSession* remoteSession, byte* buffer)
         {
+            if (host->connectHook.addressHook != null &&
+                host->connectHook.addressHook(host->connectHook.user, host, address) != 0)
+                return;
+
             uint duplicatePeers = 0;
 
             NetworkPeer* peer;
@@ -363,8 +367,8 @@ namespace Network
 
             memcpy(&peer->connectContext, buffer + 8, 32);
 
-            if (host->connectHook.hook != null &&
-                host->connectHook.hook(host->connectHook.user, host, peer) != 0)
+            if (host->connectHook.peerHook != null &&
+                host->connectHook.peerHook(host->connectHook.user, host, peer) != 0)
             {
                 network_protocol_remove_peer(host, peer);
                 return;
