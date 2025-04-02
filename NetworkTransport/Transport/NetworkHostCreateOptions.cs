@@ -11,6 +11,8 @@ namespace Network
         public uint socketSendBufferSize;
         public uint socketReceiveBufferSize;
 
+        public uint duplicatePeers;
+
         public uint maximumSocketReceiveSize;
         public uint maximumReliableReceiveSize;
 

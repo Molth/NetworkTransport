@@ -61,10 +61,9 @@ namespace Network
             var host = (NetworkHost*)malloc((uint)sizeof(NetworkHost));
 
             host->version = options.version;
+
             host->peerIDs = new UnsafeSparseSet<nint>(options.peerCount);
-
             host->freeIDs = new UnsafeQueue<ushort>(options.peerCount);
-
             host->peers = (NetworkPeer*)malloc((uint)(options.peerCount * sizeof(NetworkPeer)));
 
             memset(host->peers, 0, (uint)(options.peerCount * sizeof(NetworkPeer)));
@@ -81,6 +80,8 @@ namespace Network
 
             _ = UDP.SetNonBlocking(socket, 1);
             host->socket = socket;
+
+            host->duplicatePeers = options.duplicatePeers;
 
             host->maximumSocketReceiveSize = options.maximumSocketReceiveSize;
             host->maximumReliableReceiveSize = options.maximumReliableReceiveSize;
@@ -306,6 +307,8 @@ namespace Network
 
         private static void network_protocol_handle_connect(NetworkHost* host, Address* address, NetworkSession* remoteSession, byte* buffer)
         {
+            uint duplicatePeers = 0;
+
             NetworkPeer* peer;
 
             var peers = host->peerIDs.Values;
@@ -313,20 +316,31 @@ namespace Network
             for (var i = peers.Count - 1; i >= 0; --i)
             {
                 peer = (NetworkPeer*)peers[i];
-                if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
-                    peer->address == *address && peer->remoteSession.id == remoteSession->id)
-                {
-                    if (peer->remoteSession.timestamp < remoteSession->timestamp)
-                    {
-                        network_protocol_remove_peer(host, peer);
-                        goto add_peer;
-                    }
 
-                    return;
+                if (peer->address == *address)
+                {
+                    ++duplicatePeers;
+
+                    if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                        peer->remoteSession.id == remoteSession->id)
+                    {
+                        if (peer->remoteSession.timestamp < remoteSession->timestamp)
+                        {
+                            network_protocol_remove_peer(host, peer);
+
+                            goto add_peer;
+                        }
+
+                        return;
+                    }
                 }
             }
 
+            if (host->duplicatePeers != 0 && duplicatePeers >= host->duplicatePeers)
+                return;
+
             add_peer:
+
             peer = network_protocol_add_peer(host, address);
 
             if (peer == null)
