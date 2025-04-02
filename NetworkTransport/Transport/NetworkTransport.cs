@@ -750,6 +750,8 @@ namespace Network
             {
                 peer->state = (byte)NETWORK_PEER_STATE_DISCONNECTING;
 
+                ikcp_release(&peer->reliable);
+
                 var buffer = stackalloc byte[15];
 
                 memcpy(buffer, &peer->host->version, 4);
