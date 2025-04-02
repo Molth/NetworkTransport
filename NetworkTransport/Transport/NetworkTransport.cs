@@ -770,6 +770,31 @@ namespace Network
             return 0;
         }
 
+        public static int network_peer_disconnect_now(NetworkPeer* peer)
+        {
+            if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTED && peer->state != (byte)NETWORK_PEER_STATE_CONNECTING)
+                return -1;
+
+            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECTED)
+            {
+                var buffer = stackalloc byte[15];
+
+                memcpy(buffer, &peer->host->version, 4);
+
+                *(buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_DISCONNECT;
+
+                memcpy(buffer + 5, &peer->remoteSession.id, 2);
+                memcpy(buffer + 7, &peer->remoteSession.timestamp, 8);
+
+                _ = UDP.Send(peer->host->socket, ref peer->address, ref *buffer, 15);
+            }
+
+            network_protocol_disconnect_notify(peer->host, peer);
+            network_protocol_remove_peer(peer->host, peer);
+
+            return 0;
+        }
+
         public static void network_peer_ping_interval(NetworkPeer* peer, uint pingInterval, uint timeout)
         {
             if (pingInterval != 0)
