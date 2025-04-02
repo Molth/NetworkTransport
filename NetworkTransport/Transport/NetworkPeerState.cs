@@ -1,0 +1,16 @@
+﻿// ReSharper disable ALL
+
+namespace Network
+{
+    public enum NetworkPeerState
+    {
+        NETWORK_PEER_STATE_NONE,
+        NETWORK_PEER_STATE_CONNECTING,
+        NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING,
+
+        NETWORK_PEER_STATE_CONNECTED,
+
+        NETWORK_PEER_STATE_DISCONNECTING,
+        NETWORK_PEER_STATE_DISCONNECT_ACKNOWLEDGING
+    }
+}
