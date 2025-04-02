@@ -1,2 +1,1 @@
-# KcpTransport
- 
+This project is a high-performance transport.
