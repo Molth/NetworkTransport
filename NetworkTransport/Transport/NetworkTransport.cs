@@ -322,7 +322,7 @@ namespace Network
 
             NetworkPeer* peer;
 
-            for (int i = (int)host->servicePeers - 1; i >= 0; --i)
+            for (var i = (int)host->servicePeers - 1; i >= 0; --i)
             {
                 peer = &host->peers[host->peers[i].sparseID];
 
@@ -403,7 +403,7 @@ namespace Network
             if (localSession->id >= host->peerCount)
                 return;
 
-            var peer = (NetworkPeer*)&host->peers[localSession->id];
+            var peer = &host->peers[localSession->id];
 
             if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTING ||
                 peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
@@ -437,7 +437,7 @@ namespace Network
             if (localSession->id >= host->peerCount)
                 return;
 
-            var peer = (NetworkPeer*)&host->peers[localSession->id];
+            var peer = &host->peers[localSession->id];
 
             if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
                  peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
@@ -458,7 +458,7 @@ namespace Network
             if (localSession->id >= host->peerCount)
                 return;
 
-            var peer = (NetworkPeer*)&host->peers[localSession->id];
+            var peer = &host->peers[localSession->id];
 
             if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
                  peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
@@ -489,7 +489,7 @@ namespace Network
             if (localSession->id >= host->peerCount)
                 return;
 
-            var peer = (NetworkPeer*)&host->peers[localSession->id];
+            var peer = &host->peers[localSession->id];
 
             if (peer->state != (byte)NETWORK_PEER_STATE_DISCONNECTING ||
                 peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
@@ -506,7 +506,7 @@ namespace Network
             if (localSession->id >= host->peerCount)
                 return;
 
-            var peer = (NetworkPeer*)&host->peers[localSession->id];
+            var peer = &host->peers[localSession->id];
 
             if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
                  peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
@@ -537,7 +537,7 @@ namespace Network
             if (localSession->id >= host->peerCount)
                 return;
 
-            var peer = (NetworkPeer*)&host->peers[localSession->id];
+            var peer = &host->peers[localSession->id];
 
             if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
                  peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
@@ -594,7 +594,7 @@ namespace Network
             if (localSession->id >= host->peerCount)
                 return;
 
-            var peer = (NetworkPeer*)&host->peers[localSession->id];
+            var peer = &host->peers[localSession->id];
 
             if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
                  peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
@@ -718,7 +718,7 @@ namespace Network
 
         private static void network_protocol_check_timeouts(NetworkHost* host)
         {
-            for (int i = (int)host->servicePeers - 1; i >= 0; --i)
+            for (var i = (int)host->servicePeers - 1; i >= 0; --i)
             {
                 var peer = &host->peers[host->peers[i].sparseID];
 
