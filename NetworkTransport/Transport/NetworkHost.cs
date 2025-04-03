@@ -18,6 +18,7 @@ namespace Network
         public NetworkPeer* peers;
 
         public Socket socket;
+        public Address address;
 
         public uint duplicatePeers;
 

@@ -86,6 +86,7 @@ namespace Network
 
             _ = UDP.SetNonBlocking(socket, 1);
             host->socket = socket;
+            host->address = address;
 
             host->duplicatePeers = options.duplicatePeers;
 
