@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using kcp;
 using NanoSockets;
 using NativeCollections;
@@ -65,6 +64,8 @@ namespace Network
 
             host->version = options.version;
 
+            host->peerCount = options.peerCount;
+
             host->peerIDs = new UnsafeSparseSet<nint>(options.peerCount);
             host->freeIDs = new UnsafeQueue<ushort>(options.peerCount);
             host->peers = (NetworkPeer*)malloc((uint)(options.peerCount * sizeof(NetworkPeer)));
@@ -80,6 +81,8 @@ namespace Network
                 peer->host = host;
                 peer->localSession.id = (ushort)i;
             }
+
+            host->serviceTimestamp = (uint)timeGetTime();
 
             _ = UDP.SetNonBlocking(socket, 1);
             host->socket = socket;
@@ -132,7 +135,7 @@ namespace Network
             var buffer = stackalloc byte[(int)_imax_(host->maximumSocketReceiveSize, host->maximumReliableReceiveSize)];
             host->buffer = buffer;
 
-            host->serviceTimestamp = (uint)(Stopwatch.GetTimestamp() * 1000L / Stopwatch.Frequency);
+            host->serviceTimestamp = (uint)timeGetTime();
 
             Address address;
             NetworkSession localSession, remoteSession;

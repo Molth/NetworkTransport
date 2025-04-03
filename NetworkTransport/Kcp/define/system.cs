@@ -37,5 +37,7 @@ namespace kcp
         public static void assert(bool condition) => Debug.Assert(condition);
 
         public static void abort() => Environment.Exit(-1);
+
+        public static long timeGetTime() => Stopwatch.GetTimestamp() * 1000L / Stopwatch.Frequency;
     }
 }

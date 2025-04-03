@@ -9,6 +9,8 @@ namespace Network
     {
         public uint version;
 
+        public uint peerCount;
+
         public uint serviceTimestamp;
 
         public UnsafeSparseSet<nint> peerIDs;
@@ -23,6 +25,8 @@ namespace Network
         public uint maximumReliableReceiveSize;
 
         public UnsafeChunkedQueue<NetworkEvent> incomingEvents;
+
+        public uint connectedPeers;
 
         public NetworkConnectHook connectHook;
 
