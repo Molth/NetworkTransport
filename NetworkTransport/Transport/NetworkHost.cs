@@ -9,12 +9,11 @@ namespace Network
     {
         public uint version;
 
-        public uint peerCount;
+        public ushort peerCount;
 
         public uint serviceTimestamp;
 
         public UnsafeSparseSet<nint> peerIDs;
-        public UnsafeQueue<ushort> freeIDs;
         public NetworkPeer* peers;
 
         public Socket socket;
@@ -30,6 +29,10 @@ namespace Network
         public uint connectedPeers;
 
         public NetworkConnectHook connectHook;
+
+        public ushort freeHead;
+        public ushort freeTail;
+        public ushort freeCount;
 
         public byte* buffer;
     }

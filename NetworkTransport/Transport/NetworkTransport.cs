@@ -67,19 +67,16 @@ namespace Network
             host->peerCount = options.peerCount;
 
             host->peerIDs = new UnsafeSparseSet<nint>(options.peerCount);
-            host->freeIDs = new UnsafeQueue<ushort>(options.peerCount);
             host->peers = (NetworkPeer*)malloc((uint)(options.peerCount * sizeof(NetworkPeer)));
 
             memset(host->peers, 0, (uint)(options.peerCount * sizeof(NetworkPeer)));
 
             for (var i = 0; i < options.peerCount; ++i)
             {
-                host->freeIDs.TryEnqueue((ushort)i);
-
                 var peer = &host->peers[i];
 
                 peer->host = host;
-                peer->localSession.id = (ushort)i;
+                peer->freeID = peer->localSession.id = (ushort)i;
             }
 
             host->serviceTimestamp = (uint)timeGetTime();
@@ -97,6 +94,10 @@ namespace Network
 
             host->connectHook = options.connectHook;
 
+            host->freeHead = 0;
+            host->freeTail = 0;
+            host->freeCount = host->peerCount;
+
             return host;
         }
 
@@ -106,8 +107,6 @@ namespace Network
                 return;
 
             host->peerIDs.Dispose();
-
-            host->freeIDs.Dispose();
 
             free(host->peers);
 
@@ -635,26 +634,34 @@ namespace Network
 
         private static NetworkPeer* network_protocol_add_peer(NetworkHost* host, Address* address)
         {
-            NetworkPeer* peer = null;
-            if (host->freeIDs.TryDequeue(out var peerID))
-            {
-                peer = &host->peers[peerID];
-                host->peerIDs.Insert(peerID, (nint)peer);
+            if (host->freeCount == 0)
+                return null;
 
-                peer->address = *address;
+            var peerID = host->peers[host->freeHead].freeID;
+            if (++host->freeHead == host->peerCount)
+                host->freeHead = 0;
+            --host->freeCount;
 
-                peer->localSession.timestamp = DateTime.UtcNow.Ticks;
+            var peer = &host->peers[peerID];
+            host->peerIDs.Insert(peerID, (nint)peer);
 
-                peer->sentDataTotal = 0;
-                peer->receivedDataTotal = 0;
-            }
+            peer->address = *address;
+
+            peer->localSession.timestamp = DateTime.UtcNow.Ticks;
+
+            peer->sentDataTotal = 0;
+            peer->receivedDataTotal = 0;
 
             return peer;
         }
 
         private static void network_protocol_remove_peer(NetworkHost* host, NetworkPeer* peer)
         {
-            host->freeIDs.TryEnqueue(peer->localSession.id);
+            host->peers[host->freeTail].freeID = peer->localSession.id;
+            if (++host->freeTail == host->peerCount)
+                host->freeTail = 0;
+            ++host->freeCount;
+
             host->peerIDs.Remove(peer->localSession.id);
         }
 

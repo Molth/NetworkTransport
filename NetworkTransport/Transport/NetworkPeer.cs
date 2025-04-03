@@ -10,6 +10,8 @@ namespace Network
     {
         public NetworkHost* host;
 
+        public ushort freeID;
+
         public uint version;
 
         public Address address;
