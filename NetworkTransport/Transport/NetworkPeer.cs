@@ -10,8 +10,6 @@ namespace Network
     {
         public NetworkHost* host;
 
-        public ushort freeID;
-
         public uint version;
 
         public Address address;
@@ -41,5 +39,10 @@ namespace Network
         public uint unreliableReceiveSequenceNumber;
 
         public Guid guid;
+
+        public uint freeID;
+
+        public uint denseID;
+        public uint sparseID;
     }
 }

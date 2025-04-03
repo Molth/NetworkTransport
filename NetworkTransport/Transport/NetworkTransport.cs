@@ -66,20 +66,17 @@ namespace Network
 
             host->peerCount = options.peerCount;
 
-            host->peerIDs = new UnsafeSparseSet<nint>(options.peerCount);
-            host->peers = (NetworkPeer*)malloc((uint)(options.peerCount * sizeof(NetworkPeer)));
+            host->peers = (NetworkPeer*)malloc((uint)(host->peerCount * sizeof(NetworkPeer)));
 
-            memset(host->peers, 0, (uint)(options.peerCount * sizeof(NetworkPeer)));
+            memset(host->peers, 0, (uint)(host->peerCount * sizeof(NetworkPeer)));
 
-            for (var i = 0; i < options.peerCount; ++i)
+            for (var i = 0; i < host->peerCount; ++i)
             {
                 var peer = &host->peers[i];
 
                 peer->host = host;
                 peer->freeID = peer->localSession.id = (ushort)i;
             }
-
-            host->serviceTimestamp = (uint)timeGetTime();
 
             _ = UDP.SetNonBlocking(socket, 1);
             host->socket = socket;
@@ -94,6 +91,9 @@ namespace Network
 
             host->connectHook = options.connectHook;
 
+            host->servicePeers = 0;
+            host->connectedPeers = 0;
+
             host->freeHead = 0;
             host->freeTail = 0;
             host->freeCount = host->peerCount;
@@ -105,8 +105,6 @@ namespace Network
         {
             if (host == null)
                 return;
-
-            host->peerIDs.Dispose();
 
             free(host->peers);
 
@@ -277,6 +275,8 @@ namespace Network
             if (peer == null)
                 return null;
 
+            host->serviceTimestamp = (uint)timeGetTime();
+
             peer->version = options.version;
 
             peer->state = (byte)NETWORK_PEER_STATE_CONNECTING;
@@ -322,11 +322,9 @@ namespace Network
 
             NetworkPeer* peer;
 
-            var peers = host->peerIDs.Values;
-
-            for (var i = peers.Count - 1; i >= 0; --i)
+            for (int i = (int)host->servicePeers - 1; i >= 0; --i)
             {
-                peer = (NetworkPeer*)peers[i];
+                peer = &host->peers[host->peers[i].sparseID];
 
                 if (peer->address == *address)
                 {
@@ -402,234 +400,234 @@ namespace Network
 
         private static void network_protocol_handle_connect_acknowledge(NetworkHost* host, Address* address, NetworkSession* localSession, NetworkSession* remoteSession, byte* buffer)
         {
-            if (host->peerIDs.TryGetValue(localSession->id, out var value))
-            {
-                var peer = (NetworkPeer*)value;
+            if (localSession->id >= host->peerCount)
+                return;
 
-                if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTING ||
-                    peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
-                    return;
+            var peer = (NetworkPeer*)&host->peers[localSession->id];
 
-                peer->remoteSession = *remoteSession;
+            if (peer->state != (byte)NETWORK_PEER_STATE_CONNECTING ||
+                peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                return;
 
-                peer->lastSendTime = host->serviceTimestamp;
-                peer->lastReceiveTime = host->serviceTimestamp;
+            peer->remoteSession = *remoteSession;
 
-                memcpy(&peer->maximumSocketReceiveSize, buffer, 4);
-                memcpy(&peer->maximumReliableReceiveSize, buffer + 4, 4);
+            peer->lastSendTime = host->serviceTimestamp;
+            peer->lastReceiveTime = host->serviceTimestamp;
 
-                peer->receivedDataTotal += 33;
+            memcpy(&peer->maximumSocketReceiveSize, buffer, 4);
+            memcpy(&peer->maximumReliableReceiveSize, buffer + 4, 4);
 
-                memcpy(host->buffer, &host->version, 4);
+            peer->receivedDataTotal += 33;
 
-                *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_PING;
+            memcpy(host->buffer, &host->version, 4);
 
-                memcpy(host->buffer + 5, &peer->remoteSession.id, 2);
-                memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
+            *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_PING;
 
-                _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
-                peer->sentDataTotal += 15;
+            memcpy(host->buffer + 5, &peer->remoteSession.id, 2);
+            memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
 
-                network_protocol_connect_notify(host, peer);
-            }
+            _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
+            peer->sentDataTotal += 15;
+
+            network_protocol_connect_notify(host, peer);
         }
 
         private static void network_protocol_handle_ping(NetworkHost* host, Address* address, NetworkSession* localSession)
         {
-            if (host->peerIDs.TryGetValue(localSession->id, out var value))
-            {
-                var peer = (NetworkPeer*)value;
+            if (localSession->id >= host->peerCount)
+                return;
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
-                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
-                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER) ||
-                    peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
-                    return;
+            var peer = (NetworkPeer*)&host->peers[localSession->id];
 
-                if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
-                    network_protocol_connect_notify(host, peer);
+            if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                 peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                 peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER) ||
+                peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                return;
 
-                peer->lastReceiveTime = host->serviceTimestamp;
+            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                network_protocol_connect_notify(host, peer);
 
-                peer->receivedDataTotal += 15;
-            }
+            peer->lastReceiveTime = host->serviceTimestamp;
+
+            peer->receivedDataTotal += 15;
         }
 
         private static void network_protocol_handle_disconnect(NetworkHost* host, Address* address, NetworkSession* localSession)
         {
-            if (host->peerIDs.TryGetValue(localSession->id, out var value))
-            {
-                var peer = (NetworkPeer*)value;
+            if (localSession->id >= host->peerCount)
+                return;
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
-                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
-                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER) ||
-                    peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
-                    return;
+            var peer = (NetworkPeer*)&host->peers[localSession->id];
 
-                peer->state = (byte)NETWORK_PEER_STATE_DISCONNECT_ACKNOWLEDGING;
+            if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                 peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                 peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER) ||
+                peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                return;
 
-                peer->lastSendTime = host->serviceTimestamp;
-                peer->lastReceiveTime = host->serviceTimestamp;
+            peer->state = (byte)NETWORK_PEER_STATE_DISCONNECT_ACKNOWLEDGING;
 
-                peer->receivedDataTotal += 15;
+            peer->lastSendTime = host->serviceTimestamp;
+            peer->lastReceiveTime = host->serviceTimestamp;
 
-                memcpy(host->buffer, &host->version, 4);
+            peer->receivedDataTotal += 15;
 
-                *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_DISCONNECT_ACKNOWLEDGE;
+            memcpy(host->buffer, &host->version, 4);
 
-                memcpy(host->buffer + 5, &peer->remoteSession.id, 2);
-                memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
+            *(host->buffer + 4) = (byte)NETWORK_PROTOCOL_COMMAND_UNSEQUENCED_DISCONNECT_ACKNOWLEDGE;
 
-                _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
-                peer->sentDataTotal += 15;
-            }
+            memcpy(host->buffer + 5, &peer->remoteSession.id, 2);
+            memcpy(host->buffer + 7, &peer->remoteSession.timestamp, 8);
+
+            _ = UDP.Send(host->socket, ref peer->address, ref *host->buffer, 15);
+            peer->sentDataTotal += 15;
         }
 
         private static void network_protocol_handle_disconnect_acknowledge(NetworkHost* host, Address* address, NetworkSession* localSession)
         {
-            if (host->peerIDs.TryGetValue(localSession->id, out var value))
-            {
-                var peer = (NetworkPeer*)value;
+            if (localSession->id >= host->peerCount)
+                return;
 
-                if (peer->state != (byte)NETWORK_PEER_STATE_DISCONNECTING ||
-                    peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
-                    return;
+            var peer = (NetworkPeer*)&host->peers[localSession->id];
 
-                peer->receivedDataTotal += 15;
+            if (peer->state != (byte)NETWORK_PEER_STATE_DISCONNECTING ||
+                peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                return;
 
-                network_protocol_disconnect_notify(host, peer);
-                network_protocol_remove_peer(host, peer);
-            }
+            peer->receivedDataTotal += 15;
+
+            network_protocol_disconnect_notify(host, peer);
+            network_protocol_remove_peer(host, peer);
         }
 
         private static void network_protocol_handle_receive_reliable(NetworkHost* host, Address* address, NetworkSession* localSession, byte* buffer, int byteCount)
         {
-            if (host->peerIDs.TryGetValue(localSession->id, out var value))
+            if (localSession->id >= host->peerCount)
+                return;
+
+            var peer = (NetworkPeer*)&host->peers[localSession->id];
+
+            if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                 peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                 peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
+                || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                return;
+
+            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                network_protocol_connect_notify(host, peer);
+
+            peer->lastReceiveTime = host->serviceTimestamp;
+
+            peer->receivedDataTotal += 15 + (ulong)byteCount;
+
+            if (ikcp_input(&peer->reliable, buffer, byteCount) < 0)
             {
-                var peer = (NetworkPeer*)value;
-
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
-                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
-                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
-                    || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
-                    return;
-
-                if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
-                    network_protocol_connect_notify(host, peer);
-
-                peer->lastReceiveTime = host->serviceTimestamp;
-
-                peer->receivedDataTotal += 15 + (ulong)byteCount;
-
-                if (ikcp_input(&peer->reliable, buffer, byteCount) < 0)
-                {
-                    network_protocol_disconnect_notify(host, peer);
-                    network_protocol_remove_peer(host, peer);
-                    return;
-                }
-
-                if (peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_LATER && iqueue_is_empty(&peer->reliable.snd_buf))
-                    network_peer_disconnect(peer);
+                network_protocol_disconnect_notify(host, peer);
+                network_protocol_remove_peer(host, peer);
+                return;
             }
+
+            if (peer->state == (byte)NETWORK_PEER_STATE_DISCONNECT_LATER && iqueue_is_empty(&peer->reliable.snd_buf))
+                network_peer_disconnect(peer);
         }
 
         private static void network_protocol_handle_receive_unreliable(NetworkHost* host, Address* address, NetworkSession* localSession, byte* buffer, int byteCount)
         {
-            if (host->peerIDs.TryGetValue(localSession->id, out var value))
+            if (localSession->id >= host->peerCount)
+                return;
+
+            var peer = (NetworkPeer*)&host->peers[localSession->id];
+
+            if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                 peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                 peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
+                || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                return;
+
+            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                network_protocol_connect_notify(host, peer);
+
+            peer->lastReceiveTime = host->serviceTimestamp;
+
+            peer->receivedDataTotal += 15 + (ulong)byteCount;
+
+            if (byteCount < 4)
             {
-                var peer = (NetworkPeer*)value;
+                network_protocol_disconnect_notify(host, peer);
+                network_protocol_remove_peer(host, peer);
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
-                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
-                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
-                    || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
-                    return;
-
-                if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
-                    network_protocol_connect_notify(host, peer);
-
-                peer->lastReceiveTime = host->serviceTimestamp;
-
-                peer->receivedDataTotal += 15 + (ulong)byteCount;
-
-                if (byteCount < 4)
-                {
-                    network_protocol_disconnect_notify(host, peer);
-                    network_protocol_remove_peer(host, peer);
-
-                    return;
-                }
-
-                uint sequenceNumber;
-                memcpy(&sequenceNumber, buffer, 4);
-
-                buffer += 4;
-                byteCount -= 4;
-
-                if (_itimediff(sequenceNumber, peer->unreliableReceiveSequenceNumber) <= 0)
-                    return;
-
-                peer->unreliableReceiveSequenceNumber = sequenceNumber;
-
-                var data = new NativeArray<byte>(byteCount);
-                memcpy(data.Array, buffer, (nuint)byteCount);
-
-                var packet = new NetworkPacket
-                {
-                    flag = NETWORK_PACKET_FLAG_UNRELIABLE,
-                    data = data
-                };
-
-                host->incomingEvents.Enqueue(new NetworkEvent
-                {
-                    type = NETWORK_EVENT_TYPE_RECEIVE,
-                    peer = peer,
-                    packet = packet,
-                    guid = peer->guid
-                });
+                return;
             }
+
+            uint sequenceNumber;
+            memcpy(&sequenceNumber, buffer, 4);
+
+            buffer += 4;
+            byteCount -= 4;
+
+            if (_itimediff(sequenceNumber, peer->unreliableReceiveSequenceNumber) <= 0)
+                return;
+
+            peer->unreliableReceiveSequenceNumber = sequenceNumber;
+
+            var data = new NativeArray<byte>(byteCount);
+            memcpy(data.Array, buffer, (nuint)byteCount);
+
+            var packet = new NetworkPacket
+            {
+                flag = NETWORK_PACKET_FLAG_UNRELIABLE,
+                data = data
+            };
+
+            host->incomingEvents.Enqueue(new NetworkEvent
+            {
+                type = NETWORK_EVENT_TYPE_RECEIVE,
+                peer = peer,
+                packet = packet,
+                guid = peer->guid
+            });
         }
 
         private static void network_protocol_handle_receive_unsequenced(NetworkHost* host, Address* address, NetworkSession* localSession, byte* buffer, int byteCount)
         {
-            if (host->peerIDs.TryGetValue(localSession->id, out var value))
+            if (localSession->id >= host->peerCount)
+                return;
+
+            var peer = (NetworkPeer*)&host->peers[localSession->id];
+
+            if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
+                 peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
+                 peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
+                || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
+                return;
+
+            if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
+                network_protocol_connect_notify(host, peer);
+
+            peer->lastReceiveTime = host->serviceTimestamp;
+
+            peer->receivedDataTotal += 15 + (ulong)byteCount;
+
+            if (byteCount == 0)
+                return;
+
+            var data = new NativeArray<byte>(byteCount);
+            memcpy(data.Array, buffer, (nuint)byteCount);
+
+            var packet = new NetworkPacket
             {
-                var peer = (NetworkPeer*)value;
+                flag = NETWORK_PACKET_FLAG_UNSEQUENCED,
+                data = data
+            };
 
-                if ((peer->state != (byte)NETWORK_PEER_STATE_CONNECTED &&
-                     peer->state != (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING &&
-                     peer->state != (byte)NETWORK_PEER_STATE_DISCONNECT_LATER)
-                    || peer->address != *address || peer->localSession.timestamp != localSession->timestamp)
-                    return;
-
-                if (peer->state == (byte)NETWORK_PEER_STATE_CONNECT_ACKNOWLEDGING)
-                    network_protocol_connect_notify(host, peer);
-
-                peer->lastReceiveTime = host->serviceTimestamp;
-
-                peer->receivedDataTotal += 15 + (ulong)byteCount;
-
-                if (byteCount == 0)
-                    return;
-
-                var data = new NativeArray<byte>(byteCount);
-                memcpy(data.Array, buffer, (nuint)byteCount);
-
-                var packet = new NetworkPacket
-                {
-                    flag = NETWORK_PACKET_FLAG_UNSEQUENCED,
-                    data = data
-                };
-
-                host->incomingEvents.Enqueue(new NetworkEvent
-                {
-                    type = NETWORK_EVENT_TYPE_RECEIVE,
-                    peer = peer,
-                    packet = packet,
-                    guid = peer->guid
-                });
-            }
+            host->incomingEvents.Enqueue(new NetworkEvent
+            {
+                type = NETWORK_EVENT_TYPE_RECEIVE,
+                peer = peer,
+                packet = packet,
+                guid = peer->guid
+            });
         }
 
         private static NetworkPeer* network_protocol_add_peer(NetworkHost* host, Address* address)
@@ -643,7 +641,9 @@ namespace Network
             --host->freeCount;
 
             var peer = &host->peers[peerID];
-            host->peerIDs.Insert(peerID, (nint)peer);
+
+            host->peers[host->servicePeers].sparseID = peerID;
+            peer->denseID = host->servicePeers;
 
             peer->address = *address;
 
@@ -651,6 +651,8 @@ namespace Network
 
             peer->sentDataTotal = 0;
             peer->receivedDataTotal = 0;
+
+            ++host->servicePeers;
 
             return peer;
         }
@@ -662,7 +664,14 @@ namespace Network
                 host->freeTail = 0;
             ++host->freeCount;
 
-            host->peerIDs.Remove(peer->localSession.id);
+            --host->servicePeers;
+
+            if (peer->denseID != host->servicePeers)
+            {
+                host->peers[peer->denseID].sparseID = host->peers[host->servicePeers].sparseID;
+
+                host->peers[host->peers[host->servicePeers].sparseID].denseID = peer->denseID;
+            }
         }
 
         private static void network_protocol_connect_notify(NetworkHost* host, NetworkPeer* peer)
@@ -687,6 +696,8 @@ namespace Network
                 peer = peer,
                 guid = peer->guid
             });
+
+            ++host->connectedPeers;
         }
 
         private static void network_protocol_disconnect_notify(NetworkHost* host, NetworkPeer* peer)
@@ -701,15 +712,15 @@ namespace Network
                 peer = peer,
                 guid = peer->guid
             });
+
+            --host->connectedPeers;
         }
 
         private static void network_protocol_check_timeouts(NetworkHost* host)
         {
-            var peers = host->peerIDs.Values;
-
-            for (var i = peers.Count - 1; i >= 0; --i)
+            for (int i = (int)host->servicePeers - 1; i >= 0; --i)
             {
-                var peer = (NetworkPeer*)peers[i];
+                var peer = &host->peers[host->peers[i].sparseID];
 
                 if (_itimediff(peer->lastReceiveTime + peer->timeout, host->serviceTimestamp) <= 0)
                 {
